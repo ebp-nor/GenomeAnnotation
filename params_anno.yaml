@@ -1,0 +1,11 @@
+prefix: "" #output prefix
+assembly: "" #path of assembly
+locus_tag: ""
+species: ""
+project_id: ""
+min_aa_size: "50"
+model_proteins: "" #path to proteins that will be used for mapping and training GALBA. For instance human for mammals, or some model species within the group
+orthodb_proteins: "" #the relevant part of OrthoDB or similar database. Vertebrata for vertebrats for instance. Path to the proteins. Will be mapped with miniprot
+uniprot_proteins: "uniprot_sprot.fasta" #path to SwissProt/UniprotKB. Will be mapped and used for functional annotation
+busco_lib: "busco_dbs/lineages" #path to busco lineages
+busco_lineage: "embryophyta" 
