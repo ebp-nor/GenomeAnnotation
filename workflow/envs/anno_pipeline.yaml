@@ -1,0 +1,18 @@
+name: anno_pipeline
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - miniprot=0.11
+  - agat
+  - gffread
+  - funannotate
+  - python=3
+  - red
+  - emblmygff3
+  - compleasm
+  - transdecoder 
+  - hisat2 
+  - stringtie 
+  - diamond 
+  - hmmer
