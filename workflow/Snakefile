@@ -9,7 +9,6 @@ if config["rna_seq_r1"] and config["rna_seq_r2"]:
     rna_seq.append("stringtie/transcripts.fasta.transdecoder.genome.gff3")
     rna_seq.append("stringtie/stringtie.proteins.fa")
     lineage = config["busco_lineage"]
-    
     rna_seq.append("stringtie/busco_stringtie_%s" % lineage)
 
 rule all:
@@ -36,8 +35,8 @@ rule all_mp:
     input:
         expand("miniprot/{protein_set}_mp4evm.gff3",  protein_set=PROTEINSETS)
 
-#do some processing, mainly folding the assembly since single line fasta does not work well
-#complex headers can create problems. Best if user fixes that outside this, because handling
+#do some processing, mainly folding the assembly since single line fasta does not work well.
+#Complex headers can create problems. Best if user fixes that outside this, because handling
 #all different cases would be complex
 rule preprocess:
     output:
@@ -281,9 +280,11 @@ rule galba:
 
 def get_stringtie(wildcards):
     if rna_seq:
+        print("rnaseq")
         return "stringtie/transcripts.fasta.transdecoder.genome.gff3"
     else:
-        return ""
+        print("nothing")
+        return list()
 
 
 #3: run EVM on everything
@@ -291,12 +292,13 @@ rule evm:
     output:
         "evm/evm.gff3",
         "evm/evm.proteins.fa",
-    input: 
+    input:
         orthodb = "miniprot/orthodb_mp4evm.gff3",
         model =  "miniprot/model_mp4evm.gff3",
         uniprot =  "miniprot/uniprot_mp4evm.gff3",
         masked = expand("{prefix}.softmasked.fa", prefix=config["prefix"]),
         galba = "galba/augustus.hints.gff",
+        #expand('stringtie/transcripts.fasta.transdecoder.genome.gff3', proxy=[] if rna_seq else [None]),
         stringtie = get_stringtie,
     params:
         threads = 20,
