@@ -2,34 +2,47 @@
 
 PROTEINSETS = ['model', 'uniprot', 'orthodb']
 
-localrules: preprocess, embl
+localrules: preprocess_fold, preprocess_proteins, embl
 
 rna_seq = list()
-if config["rna_seq_r1"] and config["rna_seq_r2"]:
-    rna_seq.append("stringtie/transcripts.fasta.transdecoder.genome.gff3")
-    rna_seq.append("stringtie/stringtie.proteins.fa")
-    lineage = config["busco_lineage"]
-    rna_seq.append("stringtie/busco_stringtie_%s" % lineage)
+if "rna_seq_r1" in config and "rna_seq_r2" in config and config["rna_seq_r1"] and config["rna_seq_r2"]:
+    rna_seq.append("stringtie/hisat2.sort.bam")
+
+iso_seq = list()
+if "iso_seq" in config and config["iso_seq"]:
+    iso_seq.append("stringtie/minimap.sort.bam")
+
+trans_seq = list()
+if iso_seq or rna_seq:
+    trans_seq.append("stringtie/transcripts.fasta.transdecoder.genome.gff3")
+    #trans_seq.append("stringtie/stringtie.proteins.fa")
+    trans_seq.append(expand("stringtie/busco_stringtie_{lineage}", lineage=config["busco_lineage"]))
+    #for lineage in config["busco_lineage"]:
+        #trans_seq.append("stringtie/busco_stringtie_%s" % lineage)
 
 rule all:
     input:
         rna_seq,
-        expand("miniprot/{protein_set}_mp4evm.gff3",  protein_set=PROTEINSETS),
-        expand("{prefix}.softmasked.fa", prefix=config["prefix"]),
-        expand("{prefix}.fold.fa", prefix=config["prefix"]),
-        "galba/augustus.hints.gff",
-        "galba/galba.proteins.fa",
-        "evm/evm.gff3",
-        "filter/filtered.proteins.fa",
-        "uniprot/diamond.blastp.out",
-        "ipr/ipr.tsv",
+        iso_seq,
+        trans_seq,
+#        expand("miniprot/{protein_set}_mp4evm.gff3",  protein_set=PROTEINSETS),
+#        expand("{prefix}.softmasked.fa", prefix=config["prefix"]),
+#        expand("{prefix}.fold.fa", prefix=config["prefix"]),
+#        "galba/galba.gtf",
+#        "galba/galba.proteins.fa",
+#        "evm/evm.gff3",
+#        "filter/filtered.proteins.fa",
+#        "uniprot/diamond.blastp.out",
+#        "ipr/ipr.tsv",
         expand("functional/{prefix}.gff", prefix=config["prefix"]),
         expand("functional/{prefix}.proteins.fa", prefix=config["prefix"]),
         expand("evm/busco_evm_{lineage}", lineage=config["busco_lineage"]),
         expand("galba/busco_galba_{lineage}", lineage=config["busco_lineage"]),
         expand("functional/busco_{prefix}_{lineage}", prefix=config["prefix"], lineage=config["busco_lineage"]),
         expand("miniprot/busco_model_mp_{lineage}", lineage=config["busco_lineage"]),
-        expand("{prefix}.embl", prefix=config["prefix"]),
+#        expand("{prefix}.embl", prefix=config["prefix"]),
+        #expand("{busco_lib}/{lineage}_odb10", busco_lib=config["busco_lib"], lineage=config["busco_lineage"])
+
 
 rule all_mp:
     input:
@@ -38,25 +51,33 @@ rule all_mp:
 #do some processing, mainly folding the assembly since single line fasta does not work well.
 #Complex headers can create problems. Best if user fixes that outside this, because handling
 #all different cases would be complex
-rule preprocess:
+rule preprocess_fold:
     output:
         processed = expand("{prefix}.fold.fa", prefix=config["prefix"]),
+    input: 
+        assembly = config["assembly"],
+    shell:
+        r"""
+        cat {input.assembly} | fold > {output.processed}
+        """
+
+rule preprocess_proteins:
+    output:
         model_proteins = "proteins/model.fasta",
         uniprot_proteins ="proteins/uniprot.fasta",
         orthodb_proteins ="proteins/orthodb.fasta",
-    input: 
-        assembly = config["assembly"],
+    input:
         model = config["model_proteins"],
         uniprot = config["uniprot_proteins"],
         orthodb = config["orthodb_proteins"],
     shell:
         r"""
-        cat {input.assembly} | fold > {output.processed}
         mkdir -p proteins
         cp -rf {input.model} {output.model_proteins}
         ln -s {input.uniprot} {output.uniprot_proteins}
         ln -s {input.orthodb} {output.orthodb_proteins}
         """
+
 
 #1a: create softmasked assembly with RepeatModeler from TETools (https://github.com/Dfam-consortium/TETools). RepeatModeler takes a lot of time. Maybe do RED instead?
 
@@ -129,7 +150,7 @@ def get_mem(wildcards):
 
 def get_time(wildcards):
     if wildcards.protein_set == "orthodb":
-        return "96:0:0"
+        return "72:0:0"
     else:
         return "48:0:0"
 
@@ -178,18 +199,14 @@ rule process_mp:
         python /cluster/projects/nn8013k/scripts/annotation/convert_to_evm_output.py -i miniprot/{wildcards.protein_set}_temp.agat2.gff -o {output.gff}
         """    
 
-#1e: if RNA-Seq data, map against genome with HiSat2, and run StringTie to generate a GTF, convert to EVM input via TransDecoder
-
-rule hisat_stringtie:
+#1e1: if RNA-Seq data, map against genome with HiSat2
+rule hisat:
     output:
-        "stringtie/transcripts.fasta.transdecoder.genome.gff3",
-        "stringtie/stringtie.proteins.fa",
+        "stringtie/hisat2.sort.bam",
     input:
         assembly = expand("{prefix}.fold.fa", prefix=config["prefix"]),
         r1 = config["rna_seq_r1"],
         r2 = config["rna_seq_r2"],
-        pfam = config["pfam"],
-        uniprot =  "proteins/uniprot.fasta",
     params:
         threads = 20,
         prefix = config["prefix"]
@@ -211,13 +228,91 @@ rule hisat_stringtie:
         --rna-strandness RF \
         2> hisat.err | samtools view -buS - | \
         samtools sort -m 4G -@ {params.threads} -T tmp -O bam - > hisat2.sort.bam 2> samtools_hisat.err
+        """
 
-        stringtie --rf hisat2.sort.bam > stringtie.gtf 2> stringtie.err
+rule isoseq:
+    output:
+        "stringtie/minimap.sort.bam",
+    input:
+        assembly = expand("{prefix}.fold.fa", prefix=config["prefix"]),
+        iso = config["iso_seq"],
+    params:
+        threads = 20,
+        prefix = config["prefix"]
+    resources:
+        #time = config["fcs_gx_time"],
+        time = "96:0:0",
+        mem_per_cpu = "4G",
+        #partition = config["fcs_gx_partition"],
+        ntasks = 20
+    shell:
+        """
+        mkdir -p stringtie
+        cd stringtie
+        
+        minimap2 -t {params.threads} -ax splice:hq -uf ../{input.assembly} {input.iso} | samtools view -buS - | \
+        samtools sort -m 4G -@ {params.threads} -T tmp -O bam - > minimap.sort.bam 2> samtools_minimap.err
+        """
 
+def get_mode(wildcards):
+    if rna_seq and iso_seq:
+        return "isorna"
+    elif rna_seq:
+        return "rna"
+    elif iso_seq:
+        return "iso"
+    else:
+        print ("something went wrong, should not get here")
+
+def get_hisat(wildcards):
+    if rna_seq:
+        return "stringtie/hisat2.sort.bam"
+    else:
+        return list()
+
+def get_minimap(wildcards):
+    if iso_seq:
+        return "stringtie/minimap.sort.bam"
+    else:
+        return list()
+
+#1e2: run StringTie to generate a GTF, convert to EVM input via TransDecoder
+rule stringtie:
+    output:
+        "stringtie/transcripts.fasta.transdecoder.genome.gff3",
+        "stringtie/stringtie.proteins.fa",
+    input:
+        assembly = expand("{prefix}.fold.fa", prefix=config["prefix"]),
+        hisat = get_hisat,
+        minimap = get_minimap,        
+        pfam = config["pfam"],
+        uniprot =  "proteins/uniprot.fasta",
+    params:
+        threads = 20,
+        prefix = config["prefix"],
+        mode = get_mode,
+    resources:
+        #time = config["fcs_gx_time"],
+        time = "96:0:0",
+        mem_per_cpu = "4G",
+        #partition = config["fcs_gx_partition"],
+        ntasks = 20
+    shell:
+        r"""
+        cd stringtie
+
+        if [ {params.mode} == isorna ]; then
+            stringtie --mix --rf hisat2.sort.bam minimap.sort.bam > stringtie.gtf 2> stringtie.err
+        elif [ {params.mode} == rna ];	then
+            stringtie--rf hisat2.sort.bam > stringtie.gtf 2> stringtie.err
+        elif [ {params.mode} == iso ];	then
+            stringtie -L minimap.sort.bam > stringtie.gtf 2> stringtie.err
+        else
+            echo "Unknown setting"
+        fi
         gffread -E stringtie.gtf -o- > stringtie.gff 
         gffread -w stringtie.fa -g ../{input.assembly} stringtie.gtf
         #agat does not work here for some reason
-        #agat_sp_extract_sequences.pl --gff stringtie.gff -f ../{input.assembly} -p -o stringtie.proteins.fa 
         
         gtf_genome_to_cdna_fasta.pl stringtie.gtf ../{input.assembly} > transcripts.fasta 2> gtf_genome_to_cdna_fasta.err
 
@@ -234,7 +329,7 @@ rule hisat_stringtie:
         --sensitive \
         --max-target-seqs 1 \
         --evalue 1e-5 \
-        --threads 20 \
+        --threads {params.threads} \
         > blastp.outfmt6 2> diamond_blastp.err
 
         TransDecoder.Predict -t transcripts.fasta --retain_pfam_hits pfam.domtblout --retain_blastp_hits blastp.outfmt6 --output_dir transdecoder_dir 1> transdecoder_predict.out 2> transdecoder_predict.err
@@ -247,12 +342,14 @@ rule hisat_stringtie:
 
         """
 
+
+
 #2: run GALBA on the softmasked genome assembly using suitable proteins (zebrafish, human, etc).
 
 rule galba:
     output: 
         "galba/galba.proteins.fa",
-        annotation = "galba/augustus.hints.gff",
+        annotation = "galba/galba.gtf",
     input:
         proteins =  "proteins/model.fasta",
         assembly = expand("{prefix}.softmasked.fa", prefix=config["prefix"])
@@ -267,25 +364,26 @@ rule galba:
         ntasks = 20
     shell:
         r"""
+        rm -r galba
         mkdir -p galba 
         singularity exec -B $PWD:/data /cluster/projects/nn8013k/opt/galba/galba.sif cp -rf /usr/share/augustus/config /data/galba
+        singularity exec -B $PWD:/data /cluster/projects/nn8013k/opt/galba/galba.sif  galba.pl --version > galba.version
         singularity exec -B $PWD:/data /cluster/projects/nn8013k/opt/galba/galba.sif  galba.pl --species={params.prefix} --threads={params.threads} --genome=/data/{input.assembly} \
          --verbosity=4 --prot_seq=/data/{input.proteins}  --workingdir=/data/galba \
          --augustus_args="--stopCodonExcludedFromCDS=False" --gff3 \
          --AUGUSTUS_CONFIG_PATH=/data/galba/config \
          1> galba/galba_"`date +\%y\%m\%d_\%H\%M\%S`".out 2> galba/galba_"`date +\%y\%m\%d_\%H\%M\%S`".err
         
-        agat_sp_extract_sequences.pl --gff galba/augustus.hints.gff -f {input.assembly}  -t cds -p -o galba/galba.proteins.fa
+        agat_sp_extract_sequences.pl --gff galba/galba.gtf -f {input.assembly}  -t cds -p -o galba/galba.proteins.fa
         """    
 
 def get_stringtie(wildcards):
-    if rna_seq:
-        print("rnaseq")
+    if trans_seq:
+        print("trans_seq")
         return "stringtie/transcripts.fasta.transdecoder.genome.gff3"
     else:
         print("nothing")
         return list()
-
 
 #3: run EVM on everything
 rule evm:
@@ -297,7 +395,7 @@ rule evm:
         model =  "miniprot/model_mp4evm.gff3",
         uniprot =  "miniprot/uniprot_mp4evm.gff3",
         masked = expand("{prefix}.softmasked.fa", prefix=config["prefix"]),
-        galba = "galba/augustus.hints.gff",
+        galba = "galba/galba.gtf",
         #expand('stringtie/transcripts.fasta.transdecoder.genome.gff3', proxy=[] if rna_seq else [None]),
         stringtie = get_stringtie,
     params:
@@ -489,26 +587,29 @@ rule embl:
         --species {params.species} \
         --locus_tag {params.locus_tag} \
         --project_id {params.project_id} \
-        -o {params.prefix}.embl > create_hap1.out 2> create_hap1.err
+        -o {params.prefix}.embl > embl_gff.out 2> embl_gff.err
         """
 
 #8: busco
 rule busco:
     output:
-        directory(expand("{{dir}}/busco_{{analysis}}_{lineage}", lineage=config["busco_lineage"])),
+        #directory(expand("{{dir}}/busco_{{analysis}}_{lineage}", lineage=config["busco_lineage"])),
+        directory("{dir}/busco_{analysis}_{lineage}"),
+        #"{dir}/busco_{analysis}_{lineage}/short_summary.specific.{lineage}_odb10.busco_{analysis}_{lineage}.txt"
+        #functional/busco_inChrCarn3_arthropoda/short_summary.specific.arthropoda_odb10.busco_inChrCarn3_arthropoda.txt
     input:
         proteins = "{dir}/{analysis}.proteins.fa",
-        busco = expand("{busco_lib}/{lineage}_odb10", busco_lib=config["busco_lib"], lineage=config["busco_lineage"])
+        #busco = str(expand("{busco_lib}", busco_lib=config["busco_lib"])) + "/{lineage}_odb10"
+        #busco = expand("{config['busco_lib']}/{lineage}_odb10"
+        #busco = expand("{busco_lib}/{{lineage}}_odb10",busco_lib=config["busco_lib"]),
+        #busco = expand("{busco_lib}/{lineage}_odb10", busco_lib=config["busco_lib"], lineage=config["busco_lineage"])
     resources:
-        #time = config["fcs_gx_time"],
         mem_per_cpu = "7G",
-        #partition = config["fcs_gx_partition"],
         ntasks = 10
     params:
-        lineage = config["busco_lineage"],
-        busco_lib = config["busco_lib"],
+       busco_lib = config['busco_lib'] 
     shell:
         r"""
-        busco --tar -c 10 -i {input.proteins} -l {input.busco} -o busco_{wildcards.analysis}_{params.lineage} --out_path {wildcards.dir} \
+        busco --tar -c 10 -i {input.proteins} -l {params.busco_lib}/{wildcards.lineage}_odb10 -o busco_{wildcards.analysis}_{wildcards.lineage} --out_path {wildcards.dir} \
         -m proteins --offline 
         """
