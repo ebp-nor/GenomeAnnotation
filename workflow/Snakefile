@@ -129,7 +129,7 @@ rule miniprot:
         #time = config["fcs_gx_time"],
         #mem_per_cpu = config["fcs_gx_mem"],
         #partition = config["fcs_gx_partition"],
-        mem_per_cpu = "3G",
+        mem_per_cpu = "4G",
         ntasks = 10
     shell:
         r"""
@@ -150,7 +150,7 @@ def get_mem(wildcards):
 
 def get_time(wildcards):
     if wildcards.protein_set == "orthodb":
-        return "72:0:0"
+        return "120:0:0"
     else:
         return "48:0:0"
 
@@ -304,7 +304,7 @@ rule stringtie:
         if [ {params.mode} == isorna ]; then
             stringtie --mix --rf hisat2.sort.bam minimap.sort.bam > stringtie.gtf 2> stringtie.err
         elif [ {params.mode} == rna ];	then
-            stringtie--rf hisat2.sort.bam > stringtie.gtf 2> stringtie.err
+            stringtie --rf hisat2.sort.bam > stringtie.gtf 2> stringtie.err
         elif [ {params.mode} == iso ];	then
             stringtie -L minimap.sort.bam > stringtie.gtf 2> stringtie.err
         else
