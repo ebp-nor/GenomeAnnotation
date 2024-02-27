@@ -3,6 +3,7 @@
 PROTEINSETS = ['model', 'uniprot', 'orthodb']
 
 localrules: preprocess_fold, preprocess_proteins, embl
+#embl
 
 rna_seq = list()
 if "rna_seq_r1" in config and "rna_seq_r2" in config and config["rna_seq_r1"] and config["rna_seq_r2"]:
@@ -20,11 +21,16 @@ if iso_seq or rna_seq:
     #for lineage in config["busco_lineage"]:
         #trans_seq.append("stringtie/busco_stringtie_%s" % lineage)
 
+embl_list = list()
+if "locus_tag"  in config and config["locus_tag"]:
+   embl_list.append(expand("{prefix}.embl.gz", prefix=config["prefix"]))
+
 rule all:
     input:
         rna_seq,
         iso_seq,
         trans_seq,
+        embl_list,
 #        expand("miniprot/{protein_set}_mp4evm.gff3",  protein_set=PROTEINSETS),
 #        expand("{prefix}.softmasked.fa", prefix=config["prefix"]),
 #        expand("{prefix}.fold.fa", prefix=config["prefix"]),
@@ -441,7 +447,7 @@ rule evm:
         agat_sp_extract_sequences.pl --gff evm.gff3 -f ../{input.masked}  -t cds -p -o evm.proteins.fa 1> agat_proteins_"`date +\%y\%m\%d_\%H\%M\%S`".out 2> agat_proteins_"`date +\%y\%m\%d_\%H\%M\%S`".err
         agat_sp_extract_sequences.pl --gff evm.gff3 -f ../{input.masked}  -t exon --merge -o evm.mrna.fa 1> agat_exons_"`date +\%y\%m\%d_\%H\%M\%S`".out 2> agat_exons_"`date +\%y\%m\%d_\%H\%M\%S`".err
         """
-#4: filter annotated proteins based on matches to repeat proteins from Funannotate
+#4: filter annotated proteins based on matches to repeat proteins from Funannotate. And remove all proteins with XX in then (spanning gaps)
 rule filter:
     output:
         "filter/filtered.proteins.fa",
@@ -463,6 +469,9 @@ rule filter:
         diamond blastp --sensitive --query {input.evm_proteins} --threads 10 --out filter/repeats.tsv --db /cluster/projects/nn8013k/opt/funannotate/repeats.dmnd --evalue 1e-10 --max-target-seqs 1 --outfmt 6
 
         cut -f 1 filter/repeats.tsv |sort -u > filter/kill.list
+        
+        #the line below adds any and all proteins with X to the kill list. X is because the nucleotide sequence contains Ns.
+        cat {input.evm_proteins} |awk '/^>/ {{printf("%s%s\t",(N>0?"\n":""),$0);N++;next;}} {{printf("%s",$0);}} END {{printf("\n");}}' |grep X |cut -f 1 -d " " | tr -d ">" >> filter/kill.list
 
         rm -rf filter/removed_repeats*
         agat_sp_filter_feature_from_kill_list.pl --gff {input.evm_gff} --kill_list filter/kill.list -o filter/removed_repeats.gff
@@ -568,26 +577,110 @@ rule embl:
         annotation = expand("functional/{prefix}.gff", prefix=config["prefix"]),
         assembly = expand("{prefix}.fold.fa", prefix=config["prefix"]),
     output:
-        expand("{prefix}.embl", prefix=config["prefix"]),
+        expand("{prefix}.embl.gz", prefix=config["prefix"]),
     params:
         locus_tag = config["locus_tag"],
         species = config["species"],
         project_id = config["project_id"],
         rg = "EBP-Nor",
         prefix = config["prefix"],
+        mito_code = config["mito_code"],
+        plastid_code = config["plastid_code"],
+        main_code = config["main_code"]
     shell:
         r"""
+
+        #Need to create separate EMBL files for mitochondria and chloroplast because they have different translation tables
+
+        mkdir -p embl
+        cd embl
+        samtools faidx ../{input.assembly}
+        samtools faidx -c ../{input.assembly} MT > MT.fasta 
+        samtools faidx -c ../{input.assembly} PL > PL.fasta 
+
+        seqtk seq ../{input.assembly} | paste - - |grep -v MT |grep -v PL | tr -s "\t" "\n" |fold > wo_MT_PL.fasta
+        
+        grep ^MT ../{input.annotation} > MT.gff || true
+        grep ^PL ../{input.annotation} > PL.gff || true
+
+        grep -v ^MT ../{input.annotation} |grep -v ^PL > wo_MT_PL.gff
+
         EMBLmyGFF3 \
-        {input.annotation} \
-        {input.assembly} \
+        wo_MT_PL.gff \
+        wo_MT_PL.fasta \
         --topology linear \
         --molecule_type 'genomic DNA' \
-        --transl_table 1  \
+        --transl_table {params.main_code}  \
         --rg {params.rg} \
-        --species {params.species} \
+        --species '{params.species}' \
         --locus_tag {params.locus_tag} \
         --project_id {params.project_id} \
-        -o {params.prefix}.embl > embl_gff.out 2> embl_gff.err
+        -o wo_MT_PL.embl 
+
+        start_locus=$(grep locus_tag wo_MT_PL.embl |tail -n 1 |cut -d '_' -f 3 |tr -d "LOCUS" |tr -d '"')
+        ((start_locus+=1))
+
+
+        EMBLmyGFF3 \
+        MT.gff \
+        MT.fasta \
+        --topology linear \
+        --molecule_type 'genomic DNA' \
+        --transl_table {params.mito_code} \
+        --organelle mitochondrion \
+        --rg {params.rg} \
+        --species '{params.species}' \
+        --locus_tag {params.locus_tag} \
+        --project_id {params.project_id} \
+        --locus_numbering_start $start_locus \
+        -o MT.embl || true
+
+        if [ -s MT.embl ]
+        then 
+            continue_locus=$(grep locus_tag MT.embl |tail -n 1 |cut -d '_' -f 3 |tr -d "LOCUS" |tr -d '"')
+        else
+            continue_locus=$start_locus
+        fi
+        ((continue_locus+=1))
+
+        EMBLmyGFF3 \
+        PL.gff \
+        PL.fasta \
+        --topology linear \
+        --molecule_type 'genomic DNA' \
+        --transl_table {params.plastid_code}  \
+        --organelle plastid \
+        --rg {params.rg} \
+        --species '{params.species}' \
+        --locus_tag {params.locus_tag} \
+        --project_id {params.project_id} \
+        --locus_numbering_start $continue_locus \
+        -o PL.embl || true
+
+        cd ..
+
+        #EMBLmyGFF3 \
+        #{input.annotation} \
+        #{input.assembly} \
+        #--topology linear \
+        #--molecule_type 'genomic DNA' \
+        #--transl_table 1  \
+        #--rg {params.rg} \
+        #--species '{params.species}' \
+        #--locus_tag {params.locus_tag} \
+        #--project_id {params.project_id} \
+        #-o {params.prefix}.embl > embl_gff.out 2> embl_gff.err
+        
+        cat embl/*embl > {params.prefix}.embl
+
+        samtools faidx {input.assembly}
+        grep SUPER {input.assembly}.fai |awk '{{f=$1 ; sub(/SUPER_/,"",f) ; printf ("%s\t%s\tLinear-Chromosome\n", $1, f)}}' > {params.prefix}.chrs
+        grep MT {input.assembly}.fai |awk '{{printf ("%s\tMT\tLinear-Chromosome\tMitochondrion\n", $1)}}' >> {params.prefix}.chrs || true
+        grep PL {input.assembly}.fai |awk '{{printf ("%s\tPltd\tLinear-Chromosome\tChloroplast\n", $1)}}' >> {params.prefix}.chrs || true
+        # || true forces the command to return 0, instead of 1 if it doesn't find MT or PL in the fasta file. OK to not be successful if failing to find SUPER        
+
+        cat {params.prefix}.chrs | gzip > {params.prefix}.chrs.gz
+        cat {params.prefix}.embl | gzip > {params.prefix}.embl.gz
         """
 
 #8: busco

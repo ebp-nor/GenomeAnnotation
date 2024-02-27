@@ -16,3 +16,4 @@ dependencies:
   - stringtie 
   - diamond 
   - hmmer
+  - minimap2
