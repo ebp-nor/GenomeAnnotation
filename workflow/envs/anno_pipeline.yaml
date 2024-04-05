@@ -17,3 +17,4 @@ dependencies:
   - diamond 
   - hmmer
   - minimap2
+  - snakemake
