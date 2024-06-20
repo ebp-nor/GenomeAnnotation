@@ -17,3 +17,6 @@ dependencies:
   - diamond 
   - hmmer
   - minimap2
+  - busco
+  - snakemake
+  - earlgrey

@@ -9,12 +9,16 @@ rna_seq = list()
 if "rna_seq_r1" in config and "rna_seq_r2" in config and config["rna_seq_r1"] and config["rna_seq_r2"]:
     rna_seq.append("stringtie/hisat2.sort.bam")
 
+rna_seq_u = list()
+if "rna_seq_u" in config and config["rna_seq_u"]:
+    rna_seq.append("stringtie/hisat2_u.sort.bam")
+
 iso_seq = list()
 if "iso_seq" in config and config["iso_seq"]:
     iso_seq.append("stringtie/minimap.sort.bam")
 
 trans_seq = list()
-if iso_seq or rna_seq:
+if iso_seq or rna_seq or rna_seq_u:
     trans_seq.append("stringtie/transcripts.fasta.transdecoder.genome.gff3")
     #trans_seq.append("stringtie/stringtie.proteins.fa")
     trans_seq.append(expand("stringtie/busco_stringtie_{lineage}", lineage=config["busco_lineage"]))
@@ -28,6 +32,7 @@ if "locus_tag"  in config and config["locus_tag"]:
 rule all:
     input:
         rna_seq,
+        rna_seq_u,
         iso_seq,
         trans_seq,
         embl_list,
@@ -46,6 +51,7 @@ rule all:
         expand("galba/busco_galba_{lineage}", lineage=config["busco_lineage"]),
         expand("functional/busco_{prefix}_{lineage}", prefix=config["prefix"], lineage=config["busco_lineage"]),
         expand("miniprot/busco_model_mp_{lineage}", lineage=config["busco_lineage"]),
+        expand("{prefix}_EarlGrey/{prefix}_summaryFiles/{prefix}-families.fa.strained", prefix=config["prefix"]),
 #        expand("{prefix}.embl", prefix=config["prefix"]),
         #expand("{busco_lib}/{lineage}_odb10", busco_lib=config["busco_lib"], lineage=config["busco_lineage"])
 
@@ -86,25 +92,25 @@ rule preprocess_proteins:
 
 
 #1a: create softmasked assembly with RepeatModeler from TETools (https://github.com/Dfam-consortium/TETools). RepeatModeler takes a lot of time. Maybe do RED instead?
+#earlgrey instead
 
-rule softmask_rm:
+rule earlgrey:
     output:
-       database = "database"
+       repeats = "{prefix}_EarlGrey/{prefix}_summaryFiles/{prefix}-families.fa.strained"
     input:
        assembly = "{prefix}.fold.fa"
 #    threads: 20
     params:
-        threads = 60                        
+        threads = 64                        
     resources:
         time = "128:0:0",
-#        mem_per_cpu = "60G",
-#        partition = "bigmem",
-#        ntasks = 30   
+        mem_per_cpu = "5G",
+        partition = "bigmem",
+        ntasks = 64   
     shell:
-       r"""
-       singularity exec --bind $PWD:/data --pwd /data /cluster/projects/nn8013k/opt/tetools/dfam-tetools-1.85.sif BuildDatabase -name {output.database} {input.assembly}
-       singularity exec --bind $PWD:/data --pwd /data /cluster/projects/nn8013k/opt/tetools/dfam-tetools-1.85.sif RepeatModeler -database {output.database} -LTRStruct -threads {threads}
-       """
+        r"""
+        earlGrey -t {params.threads} -g {input.assembly} -s {wildcards.prefix} -o .
+        """
 
 rule softmask:
     output:
@@ -135,8 +141,9 @@ rule miniprot:
         #time = config["fcs_gx_time"],
         #mem_per_cpu = config["fcs_gx_mem"],
         #partition = config["fcs_gx_partition"],
-        mem_per_cpu = "4G",
-        ntasks = 10
+        mem_per_cpu = "5G",
+        ntasks = 10,
+        time = "72:0:0"
     shell:
         r"""
         miniprot -It{params.threads} --gff {input.assembly} {input.proteins} > miniprot/{wildcards.protein_set}_mp_aln.gff 2> miniprot/miniprot_{wildcards.protein_set}_"`date +\%y\%m\%d_\%H\%M\%S`".err
@@ -150,7 +157,7 @@ def get_partition(wildcards):
 
 def get_mem(wildcards):
     if wildcards.protein_set == "orthodb":
-        return "650G"
+        return "750G"
     else:
         return "100G"
 
@@ -196,13 +203,21 @@ rule process_mp:
             touch miniprot/{wildcards.protein_set}_mp.mrna.fa
         fi
         grep -v "^##" miniprot/{wildcards.protein_set}_mp_aln.gff |sort -k1,1 -k4,4n -k5,5n > miniprot/{wildcards.protein_set}_temp.mp.gff
-        rm -f miniprot/{wildcards.protein_set}_temp.agat.gff
+        rm -f miniprot/{wildcards.protein_set}_temp.agat.gff  || true
         agat_convert_sp_gxf2gxf.pl -g miniprot/{wildcards.protein_set}_temp.mp.gff -o miniprot/{wildcards.protein_set}_temp.agat.gff > miniprot/{wildcards.protein_set}_agat_convert.out 2> miniprot/{wildcards.protein_set}_agat_convert.err
+        rm -f miniprot/{wildcards.protein_set}_mp_aln.gff   
+        
         gffread -T -V -g {input.assembly} miniprot/{wildcards.protein_set}_temp.agat.gff > miniprot/{wildcards.protein_set}_temp.agat.gtf
         cat miniprot/{wildcards.protein_set}_temp.agat.gtf |gtf2gff.pl --gff3 --printExon --out=miniprot/{wildcards.protein_set}_temp.convert.gff
-        rm -f miniprot/{wildcards.protein_set}_temp.agat2.gff
+        rm -f miniprot/{wildcards.protein_set}_temp.agat.gtf
+        rm -f miniprot/{wildcards.protein_set}_temp.agat.gff 
+
+        rm -f miniprot/{wildcards.protein_set}_temp.agat2.gff  || true
         agat_convert_sp_gxf2gxf.pl -g miniprot/{wildcards.protein_set}_temp.convert.gff -o miniprot/{wildcards.protein_set}_temp.agat2.gff > miniprot/{wildcards.protein_set}_agat_convert_2.out 2> miniprot/{wildcards.protein_set}_agat_convert_2.err
+        
+        rm -f miniprot/{wildcards.protein_set}_temp.convert.gff
         python /cluster/projects/nn8013k/scripts/annotation/convert_to_evm_output.py -i miniprot/{wildcards.protein_set}_temp.agat2.gff -o {output.gff}
+        rm -f miniprot/{wildcards.protein_set}_temp.agat2.gff
         """    
 
 #1e1: if RNA-Seq data, map against genome with HiSat2
@@ -219,7 +234,7 @@ rule hisat:
     resources:
         #time = config["fcs_gx_time"],
         time = "96:0:0",
-        mem_per_cpu = "4G",
+        mem_per_cpu = "6G",
         #partition = config["fcs_gx_partition"],
         ntasks = 20
     shell:
@@ -232,6 +247,34 @@ rule hisat:
         -1 {input.r1} \
         -2 {input.r2} \
         --rna-strandness RF \
+        2> hisat.err | samtools view -buS - | \
+        samtools sort -m 4G -@ {params.threads} -T tmp -O bam - > hisat2.sort.bam 2> samtools_hisat.err
+        """
+
+rule hisat_u:
+    output:
+        "stringtie/hisat2_u.sort.bam",
+    input:
+        assembly = expand("{prefix}.fold.fa", prefix=config["prefix"]),
+        u = config["rna_seq_r1"],
+    params:
+        threads = 20,
+        prefix = config["prefix"]
+    resources:
+        #time = config["fcs_gx_time"],
+        time = "96:0:0",
+        mem_per_cpu = "6G",
+        #partition = config["fcs_gx_partition"],
+        ntasks = 20
+    shell:
+        r"""
+        mkdir -p stringtie
+        cd stringtie
+        hisat2-build ../{input.assembly} {params.prefix} 2> hisat-build.err
+
+        hisat2 -p {params.threads} --dta -x {params.prefix} \
+        -u {input.u} \
+        --rna-strandness R \
         2> hisat.err | samtools view -buS - | \
         samtools sort -m 4G -@ {params.threads} -T tmp -O bam - > hisat2.sort.bam 2> samtools_hisat.err
         """
@@ -265,6 +308,8 @@ def get_mode(wildcards):
         return "isorna"
     elif rna_seq:
         return "rna"
+    elif rna_seq_u:
+        return "rna_u"
     elif iso_seq:
         return "iso"
     else:
@@ -272,6 +317,8 @@ def get_mode(wildcards):
 
 def get_hisat(wildcards):
     if rna_seq:
+        return "stringtie/hisat2.sort.bam"
+    elif rna_seq_u:
         return "stringtie/hisat2.sort.bam"
     else:
         return list()
@@ -311,6 +358,8 @@ rule stringtie:
             stringtie --mix --rf hisat2.sort.bam minimap.sort.bam > stringtie.gtf 2> stringtie.err
         elif [ {params.mode} == rna ];	then
             stringtie --rf hisat2.sort.bam > stringtie.gtf 2> stringtie.err
+        elif [ {params.mode} == rna_u ];  then
+            stringtie hisat2.sort.bam > stringtie.gtf 2> stringtie.err
         elif [ {params.mode} == iso ];	then
             stringtie -L minimap.sort.bam > stringtie.gtf 2> stringtie.err
         else
@@ -324,12 +373,12 @@ rule stringtie:
 
         gtf_to_alignment_gff3.pl stringtie.gtf > transcripts.gff3 2> transcripts.err
 
-        TransDecoder.LongOrfs -t transcripts.fasta --output_dir transdecoder_dir 1> transdecoder_longorfs.out 2> transdecoder_longorfs.err
+        TransDecoder.LongOrfs -t transcripts.fasta --output_dir . 1> transdecoder_longorfs.out 2> transdecoder_longorfs.err
 
-        hmmsearch --cpu {params.threads} --domtblout pfam.domtblout {input.pfam} transdecoder_dir/longest_orfs.pep 1> hmmscan.out 2> hmmscan.err
+        hmmsearch --cpu {params.threads} --domtblout pfam.domtblout {input.pfam} transcripts.fasta.transdecoder_dir/longest_orfs.pep 1> hmmscan.out 2> hmmscan.err
 
         diamond blastp \
-        --query transdecoder_dir/longest_orfs.pep  \
+        --query transcripts.fasta.transdecoder_dir/longest_orfs.pep  \
         --db ../{input.uniprot} \
 	--outfmt 6 \
         --sensitive \
@@ -338,12 +387,13 @@ rule stringtie:
         --threads {params.threads} \
         > blastp.outfmt6 2> diamond_blastp.err
 
-        TransDecoder.Predict -t transcripts.fasta --retain_pfam_hits pfam.domtblout --retain_blastp_hits blastp.outfmt6 --output_dir transdecoder_dir 1> transdecoder_predict.out 2> transdecoder_predict.err
+        TransDecoder.Predict -t transcripts.fasta --retain_pfam_hits pfam.domtblout --retain_blastp_hits blastp.outfmt6 --output_dir . 1> transdecoder_predict.out 2> transdecoder_predict.err
 
         cdna_alignment_orf_to_genome_orf.pl \
         transcripts.fasta.transdecoder.gff3 \
         transcripts.gff3 \
         transcripts.fasta > transcripts.fasta.transdecoder.genome.gff3
+
         ln -s transcripts.fasta.transdecoder.pep stringtie.proteins.fa
 
         """

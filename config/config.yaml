@@ -8,4 +8,14 @@ model_proteins: "" #path to proteins that will be used for mapping and training 
 orthodb_proteins: "" #the relevant part of OrthoDB or similar database. Vertebrata for vertebrats for instance. Path to the proteins. Will be mapped with miniprot
 uniprot_proteins: "uniprot_sprot.fasta" #path to SwissProt/UniprotKB. Will be mapped and used for functional annotation
 busco_lib: "busco_dbs/lineages" #path to busco lineages
-busco_lineage: "embryophyta" 
+busco_lineage: 
+  - embryophyta
+  - viridiplantae
+pfam: "/cluster/projects/nn8013k/opt/funannotate/Pfam-A.hmm" #for transdecoder, pfam library
+rna_seq_r1: ""
+rna_seq_r2: ""
+rna_seq_u: ""
+iso_seq: ""
+mito_code: "1" #set to correct code if vertebrate (2) or plant (1) or something else
+plastid_code: "11" #most likely correct
+main_code: "1" #most likely correct for most species
