@@ -474,7 +474,7 @@ rule evm:
 
         printf "ABINITIO_PREDICTION\tAugustus\t1\n" > evm/weights.evm.txt 
         printf "OTHER_PREDICTION\tminiprot\t4\n" >> evm/weights.evm.txt
-        printf "OTHER_PREDICTION\ttransdecoder\t6\n" >> weights.evm.txt
+        printf "OTHER_PREDICTION\ttransdecoder\t6\n" >> evm/weights.evm.txt
         
         cd evm
         
@@ -517,18 +517,20 @@ rule filter:
         r"""
         mkdir -p filter
         diamond blastp --sensitive --query {input.evm_proteins} --threads 10 --out filter/repeats.tsv --db /cluster/projects/nn8013k/opt/funannotate/repeats.dmnd --evalue 1e-10 --max-target-seqs 1 --outfmt 6
-
-        cut -f 1 filter/repeats.tsv |sort -u > filter/kill.list
         
-        #the line below adds any and all proteins with X to the kill list. X is because the nucleotide sequence contains Ns.
+        set +e
+        cut -f 1 filter/repeats.tsv |sort -u > filter/kill.list
+        #the line below adds any and all proteins with X to the kill list. X is because the nucleotide sequence contains Ns. For some reason it sometimes returns 1. Have to set +e above to avoid aborting the pipeline
         cat {input.evm_proteins} |awk '/^>/ {{printf("%s%s\t",(N>0?"\n":""),$0);N++;next;}} {{printf("%s",$0);}} END {{printf("\n");}}' |grep X |cut -f 1 -d " " | tr -d ">" >> filter/kill.list
-
+        #[ -f filter/removed_repeats.gff ] && rm -rf filter/removed_repeats*
+	echo "remove some old files 1"
         rm -rf filter/removed_repeats*
         agat_sp_filter_feature_from_kill_list.pl --gff {input.evm_gff} --kill_list filter/kill.list -o filter/removed_repeats.gff
 
+        #[ -f filter/filtered_genes.gff ] && rm -rf filter/filtered_genes* 
+        echo "remove some old files 2"
         rm -rf filter/filtered_genes*
         agat_sp_filter_by_ORF_size.pl --gff filter/removed_repeats.gff -s {params.min_aa_size} -o filter/filtered_genes.gff
-
         agat_sp_extract_sequences.pl --gff filter/filtered_genes_sup{params.min_aa_size}.gff -f {input.masked} -t cds -p -o filter/filtered.proteins.fa 1> filter/agat_proteins_"`date +\%y\%m\%d_\%H\%M\%S`".out 2> filter/agat_proteins_"`date +\%y\%m\%d_\%H\%M\%S`".err
         """
 
