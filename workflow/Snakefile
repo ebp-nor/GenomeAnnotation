@@ -55,6 +55,20 @@ rule all:
 #        expand("{prefix}.embl", prefix=config["prefix"]),
         #expand("{busco_lib}/{lineage}_odb10", busco_lib=config["busco_lib"], lineage=config["busco_lineage"])
 
+rule no_te:
+    input:
+        rna_seq,
+        rna_seq_u,
+        iso_seq,
+        trans_seq,
+        embl_list,
+        expand("functional/{prefix}.proteins.fa", prefix=config["prefix"]),
+        expand("evm/busco_evm_{lineage}", lineage=config["busco_lineage"]),
+        expand("galba/busco_galba_{lineage}", lineage=config["busco_lineage"]),
+        expand("functional/busco_{prefix}_{lineage}", prefix=config["prefix"], lineage=config["busco_lineage"]),
+        expand("miniprot/busco_model_mp_{lineage}", lineage=config["busco_lineage"]),
+
+
 
 rule all_mp:
     input:
@@ -612,6 +626,7 @@ rule functional:
         agat_sp_manage_functional_annotation.pl --gff ../{input.filtered} -i ../{input.ipr} -b ../{input.uniprot_blast} \
         --ID FUNC \
         -o fun \
+        --clean_name \
         -db ../{input.uniprot} \
         1> manage_functional_annotation.out 2> manage_functional_annotation.err
 
