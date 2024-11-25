@@ -70,6 +70,20 @@ rule no_te:
 
 
 
+rule no_te:
+    input:
+        rna_seq,
+        rna_seq_u,
+        iso_seq,
+        trans_seq,
+        embl_list,
+        expand("functional/{prefix}.gff", prefix=config["prefix"]),
+        expand("functional/{prefix}.proteins.fa", prefix=config["prefix"]),
+        expand("evm/busco_evm_{lineage}", lineage=config["busco_lineage"]),
+        expand("galba/busco_galba_{lineage}", lineage=config["busco_lineage"]),
+        expand("functional/busco_{prefix}_{lineage}", prefix=config["prefix"], lineage=config["busco_lineage"]),
+        expand("miniprot/busco_model_mp_{lineage}", lineage=config["busco_lineage"]),
+
 rule all_mp:
     input:
         expand("miniprot/{protein_set}_mp4evm.gff3",  protein_set=PROTEINSETS)
@@ -190,10 +204,6 @@ rule process_mp:
     input:
         gff = "miniprot/{protein_set}_mp_aln.gff",
         assembly = expand("{prefix}.fold.fa", prefix=config["prefix"]),
-#        proteins = "proteins/{protein_set}.fasta",
-        #proteins = "proteins/{protein_set}.fasta",
-#       proteins = expand("proteins/{protein_set}.fasta",, protein_set=PROTEINSETS),    
-#    threads: 10
     params:
         threads = 1
     resources:
@@ -216,22 +226,7 @@ rule process_mp:
 	    touch miniprot/{wildcards.protein_set}_mp.proteins.fa
             touch miniprot/{wildcards.protein_set}_mp.mrna.fa
         fi
-        grep -v "^##" miniprot/{wildcards.protein_set}_mp_aln.gff |sort -k1,1 -k4,4n -k5,5n > miniprot/{wildcards.protein_set}_temp.mp.gff
-        rm -f miniprot/{wildcards.protein_set}_temp.agat.gff  || true
-        agat_convert_sp_gxf2gxf.pl -g miniprot/{wildcards.protein_set}_temp.mp.gff -o miniprot/{wildcards.protein_set}_temp.agat.gff > miniprot/{wildcards.protein_set}_agat_convert.out 2> miniprot/{wildcards.protein_set}_agat_convert.err
-        rm -f miniprot/{wildcards.protein_set}_mp_aln.gff   
-        
-        gffread -T -V -g {input.assembly} miniprot/{wildcards.protein_set}_temp.agat.gff > miniprot/{wildcards.protein_set}_temp.agat.gtf
-        cat miniprot/{wildcards.protein_set}_temp.agat.gtf |gtf2gff.pl --gff3 --printExon --out=miniprot/{wildcards.protein_set}_temp.convert.gff
-        rm -f miniprot/{wildcards.protein_set}_temp.agat.gtf
-        rm -f miniprot/{wildcards.protein_set}_temp.agat.gff 
-
-        rm -f miniprot/{wildcards.protein_set}_temp.agat2.gff  || true
-        agat_convert_sp_gxf2gxf.pl -g miniprot/{wildcards.protein_set}_temp.convert.gff -o miniprot/{wildcards.protein_set}_temp.agat2.gff > miniprot/{wildcards.protein_set}_agat_convert_2.out 2> miniprot/{wildcards.protein_set}_agat_convert_2.err
-        
-        rm -f miniprot/{wildcards.protein_set}_temp.convert.gff
-        python /cluster/projects/nn8013k/scripts/annotation/convert_to_evm_output.py -i miniprot/{wildcards.protein_set}_temp.agat2.gff -o {output.gff}
-        rm -f miniprot/{wildcards.protein_set}_temp.agat2.gff
+        python $EVM_HOME/EvmUtils/misc/miniprot_GFF_2_EVM_GFF3.py {input.gff}  > {output.gff}
         """    
 
 #1e1: if RNA-Seq data, map against genome with HiSat2
@@ -479,12 +474,14 @@ rule evm:
     shell:
         r"""
         mkdir -p evm 
-        /cluster/projects/nn8013k/programs/miniconda3/envs/anno_pipeline/opt/evidencemodeler-1.1.1/EvmUtils/misc/augustus_GTF_to_EVM_GFF3.pl {input.galba} > evm/galba.evm.gff3 
+        $EVM_HOME/EvmUtils/misc/augustus_GTF_to_EVM_GFF3.pl {input.galba} > evm/galba.evm.gff3 
+        #/cluster/projects/nn8013k/programs/miniconda3/envs/anno_pipeline/opt/evidencemodeler-1.1.1/EvmUtils/misc/augustus_GTF_to_EVM_GFF3.pl {input.galba} > evm/galba.evm.gff3 
         cat evm/galba.evm.gff3 > evm/gene_predictions.gff3 
-        cat {input.orthodb} >> evm/gene_predictions.gff3 
-        cat {input.model} >> evm/gene_predictions.gff3 
-        cat {input.uniprot} >> evm/gene_predictions.gff3
-        cat {input.stringtie} >> evm/gene_predictions.gff3
+        cat {input.orthodb} | awk '/gene/ {{printf "\n"}}1' >> evm/gene_predictions.gff3 
+        cat {input.model} | awk '/gene/ {{printf "\n"}}1' >> evm/gene_predictions.gff3 
+        cat {input.uniprot} | awk '/gene/ {{printf "\n"}}1' >> evm/gene_predictions.gff3
+        cat {input.stringtie} | awk '/gene/ {{printf "\n"}}1' >> evm/gene_predictions.gff3
+        #the awk thingy adds an empty line before each line matching gene to make the script below work
 
         printf "ABINITIO_PREDICTION\tAugustus\t1\n" > evm/weights.evm.txt 
         printf "OTHER_PREDICTION\tminiprot\t4\n" >> evm/weights.evm.txt
@@ -492,7 +489,8 @@ rule evm:
         
         cd evm
         
-        /cluster/projects/nn8013k/programs/miniconda3/envs/anno_pipeline/lib/python3.8/site-packages/funannotate/aux_scripts/funannotate-runEVM.py \
+        #/cluster/projects/nn8013k/programs/miniconda3/envs/anno_pipeline/lib/python3.8/site-packages/funannotate/aux_scripts/funannotate-runEVM.py \
+        /cluster/projects/nn8013k/programs/miniconda3/envs/anno_pipeline3/lib/python3.8/site-packages/funannotate/aux_scripts/funannotate-runEVM.py \
         -w weights.evm.txt \
         -c {params.threads} \
         -d . \
@@ -502,9 +500,11 @@ rule evm:
         -m 10 \
         -i 1500 \
         -o evm.gff3 \
-        --EVM_HOME /cluster/projects/nn8013k/programs/miniconda3/envs/anno_pipeline/opt/evidencemodeler-1.1.1 \
+        --EVM_HOME $EVM_HOME \
         1> evm_"`date +\%y\%m\%d_\%H\%M\%S`".out 2> evm_"`date +\%y\%m\%d_\%H\%M\%S`".err 
                
+        #--EVM_HOME /cluster/projects/nn8013k/programs/miniconda3/envs/anno_pipeline/opt/evidencemodeler-1.1.1 \
+
         #for some stupid reason, funannotate-runEVM.py does not create the GFF file...
 	#"scripts/concat_gff.py"        
 
