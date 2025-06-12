@@ -1,0 +1,19 @@
+prefix: "qhCalElon1_hap1" #output prefix
+assembly: "../../curated/qhCalElon1.1.hap1.fa" #path of assembly
+locus_tag: "QHCAEL1EN1"
+species: "Caligus elongatus"
+project_id: "PRJEBXXXXX"
+min_aa_size: "50"
+orthodb_proteins: "/cluster/projects/nn8013k/opt/OrthoDB/v11/Arthropoda.fa"
+model_proteins: "/cluster/projects/nn8013k/opt/miniprot_proteins/based_on_annotation/fruitfly/fruitfly.proteins.fa"
+uniprot_proteins: "/cluster/projects/nn8013k/opt/uniprot/uniprot_sprot.fasta" #path to SwissProt/UniprotKB. Will be mapped and used for functional annotation
+busco_lib: "/cluster/projects/nn8013k/opt/busco_dbs/lineages"
+busco_lineage: 
+  - arthropoda
+pfam: "/cluster/projects/nn8013k/opt/funannotate/Pfam-A.hmm" #for transdecoder, pfam library
+rna_seq_r1: ""
+rna_seq_r2: ""
+iso_seq: ""
+mito_code: "5" #set to correct code if vertebrate (2) or plant (1) or something else
+plastid_code: "" #most likely correct
+main_code: "1" #most likely correct for most species
