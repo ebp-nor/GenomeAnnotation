@@ -3,48 +3,38 @@
 PROTEINSETS = ['model', 'uniprot', 'orthodb']
 
 localrules: preprocess_fold, preprocess_proteins, embl
-#embl
 
-rna_seq = list()
-if "rna_seq_r1" in config and "rna_seq_r2" in config and config["rna_seq_r1"] and config["rna_seq_r2"]:
-    rna_seq.append("stringtie/hisat2.sort.bam")
+# Define conditions for producing different output types 
+is_rna_seq = if "rna_seq_r1" in config and "rna_seq_r2" in config and config["rna_seq_r1"] and config["rna_seq_r2"]
+is_rna_seq_u = if "rna_seq_u" in config and config["rna_seq_u"]
+is_iso_seq =  if "iso_seq" in config and config["iso_seq"] 
+is_on_seq = if "on_seq" in config and config["on_seq"]
+is_locus_tag = if "locus_tag"  in config and config["locus_tag"]
 
-rna_seq_u = list()
-if "rna_seq_u" in config and config["rna_seq_u"]:
-    rna_seq.append("stringtie/hisat2_u.sort.bam")
+# Create output paths if conditions met
+rna_seq = if is_rna_seq ["stringtie/hisat2.sort.bam"] else list()
+rna_seq_u = if is_rna_seq_u ["stringtie/hisat2.sort.bam"] else list()
+iso_seq = if is_iso_seq ["stringtie/minimap_iso.sort.bam"] else list()
+on_seq = ["stringtie/minimap_on.sort.bam"] if is_on_seq else list()
+merged_iso_on = if is_iso_seq and is_on_seq ["stringtie/minimap.sort.bam"] else list()
 
-iso_seq = list()
-if "iso_seq" in config and config["iso_seq"]:
-    iso_seq.append("stringtie/minimap.sort.bam")
+embl_list = if is_locus_tag [expand("{prefix}.embl.gz", prefix=config["prefix"])] else list()
 
 trans_seq = list()
-if iso_seq or rna_seq or rna_seq_u:
+if is_iso_seq or is_rna_seq or is_rna_seq_u or is_on_seq:
     trans_seq.append("stringtie/transcripts.fasta.transdecoder.genome.gff3")
-    #trans_seq.append("stringtie/stringtie.proteins.fa")
     trans_seq.append(expand("stringtie/busco_stringtie_{lineage}", lineage=config["busco_lineage"]))
-    #for lineage in config["busco_lineage"]:
-        #trans_seq.append("stringtie/busco_stringtie_%s" % lineage)
 
-embl_list = list()
-if "locus_tag"  in config and config["locus_tag"]:
-   embl_list.append(expand("{prefix}.embl.gz", prefix=config["prefix"]))
 
 rule all:
     input:
         rna_seq,
         rna_seq_u,
         iso_seq,
+        on_seq,
         trans_seq,
         embl_list,
-#        expand("miniprot/{protein_set}_mp4evm.gff3",  protein_set=PROTEINSETS),
-#        expand("{prefix}.softmasked.fa", prefix=config["prefix"]),
-#        expand("{prefix}.fold.fa", prefix=config["prefix"]),
-#        "galba/galba.gtf",
-#        "galba/galba.proteins.fa",
-#        "evm/evm.gff3",
-#        "filter/filtered.proteins.fa",
-#        "uniprot/diamond.blastp.out",
-#        "ipr/ipr.tsv",
+        merged_iso_on,
         expand("functional/{prefix}.gff", prefix=config["prefix"]),
         expand("functional/{prefix}.proteins.fa", prefix=config["prefix"]),
         expand("evm/busco_evm_{lineage}", lineage=config["busco_lineage"]),
@@ -52,16 +42,16 @@ rule all:
         expand("functional/busco_{prefix}_{lineage}", prefix=config["prefix"], lineage=config["busco_lineage"]),
         expand("miniprot/busco_model_mp_{lineage}", lineage=config["busco_lineage"]),
         expand("{prefix}_EarlGrey/{prefix}_summaryFiles/{prefix}-families.fa.strained", prefix=config["prefix"]),
-#        expand("{prefix}.embl", prefix=config["prefix"]),
-        #expand("{busco_lib}/{lineage}_odb10", busco_lib=config["busco_lib"], lineage=config["busco_lineage"])
 
 rule no_te:
     input:
         rna_seq,
         rna_seq_u,
         iso_seq,
+        on_seq,
         trans_seq,
         embl_list,
+        merged_iso_on,
         expand("functional/{prefix}.gff", prefix=config["prefix"]),
         expand("functional/{prefix}.proteins.fa", prefix=config["prefix"]),
         expand("evm/busco_evm_{lineage}", lineage=config["busco_lineage"]),
@@ -73,9 +63,9 @@ rule all_mp:
     input:
         expand("miniprot/{protein_set}_mp4evm.gff3",  protein_set=PROTEINSETS)
 
-#do some processing, mainly folding the assembly since single line fasta does not work well.
-#Complex headers can create problems. Best if user fixes that outside this, because handling
-#all different cases would be complex
+# Do some processing, mainly folding the assembly since single line fasta does not work well.
+# Complex headers can create problems. Best if user fixes that outside this, because handling
+# all different cases would be complex
 rule preprocess_fold:
     output:
         processed = expand("{prefix}.fold.fa", prefix=config["prefix"]),
@@ -112,7 +102,6 @@ rule earlgrey:
        repeats = "{prefix}_EarlGrey/{prefix}_summaryFiles/{prefix}-families.fa.strained"
     input:
        assembly = "{prefix}.fold.fa"
-#    threads: 20
     params:
         threads = 64                        
     resources:
@@ -127,7 +116,6 @@ rule earlgrey:
 
 rule softmask:
     output:
-#        masked = expand("{prefix}.softmasked.fa", prefix=config["prefix"])
         masked = "{prefix}.softmasked.fa"
     input:
         assembly = "{prefix}.fold.fa"
@@ -151,9 +139,6 @@ rule miniprot:
     params:
         threads = 10
     resources:
-        #time = config["fcs_gx_time"],
-        #mem_per_cpu = config["fcs_gx_mem"],
-        #partition = config["fcs_gx_partition"],
         mem_per_cpu = "5G",
         ntasks = 10,
         time = "72:0:0"
@@ -180,12 +165,10 @@ def get_time(wildcards):
     else:
         return "48:0:0"
 
-
 rule process_mp:
     output:
         "miniprot/{protein_set}_mp.proteins.fa",
         gff = "miniprot/{protein_set}_mp4evm.gff3",
-#        gff = expand("{protein_set}_mp4evm.gff3", protein_set=PROTEINSETS),
     input:
         gff = "miniprot/{protein_set}_mp_aln.gff",
         assembly = expand("{prefix}.fold.fa", prefix=config["prefix"]),
@@ -226,10 +209,8 @@ rule hisat:
         threads = 20,
         prefix = config["prefix"]
     resources:
-        #time = config["fcs_gx_time"],
         time = "96:0:0",
         mem_per_cpu = "6G",
-        #partition = config["fcs_gx_partition"],
         ntasks = 20
     shell:
         r"""
@@ -273,42 +254,76 @@ rule hisat_u:
         samtools sort -m 4G -@ {params.threads} -T tmp -O bam - > hisat2.sort.bam 2> samtools_hisat.err
         """
 
+def get_mode(wildcards):
+    if is_rna_seq and is_iso_seq and is_on_seq:
+        return "onisorna"
+    elif is_rna_seq and is_iso_seq:
+        return "isorna"
+    elif is_iso_seq and is_on_seq:
+        return "oniso"
+    elif is_rna_seq and is_on_seq:
+        return "onrna"
+    elif is_rna_seq:
+        return "rna"
+    elif is_rna_seq_u:
+        return "rna_u"
+    elif is_iso_seq:
+        return "iso"
+    elif is_on_seq:
+        return "on"
+    else:
+        print ("something went wrong, should not get here")
+
+#if iso data, run against genome with minimap2
 rule isoseq:
     output:
-        "stringtie/minimap.sort.bam",
+        "stringtie/minimap_iso.sort.bam",
     input:
         assembly = expand("{prefix}.fold.fa", prefix=config["prefix"]),
         iso = config["iso_seq"],
     params:
         threads = 20,
         prefix = config["prefix"]
+        mode = get_mode
     resources:
-        #time = config["fcs_gx_time"],
         time = "96:0:0",
         mem_per_cpu = "4G",
-        #partition = config["fcs_gx_partition"],
         ntasks = 20
     shell:
         """
         mkdir -p stringtie
         cd stringtie
-        
+
         minimap2 -t {params.threads} -ax splice:hq -uf ../{input.assembly} {input.iso} | samtools view -buS - | \
-        samtools sort -m 4G -@ {params.threads} -T tmp -O bam - > minimap.sort.bam 2> samtools_minimap.err
+        samtools sort -m 4G -@ {params.threads} -T tmp -O bam - > minimap_iso.sort.bam 2> samtools_minimap_iso.err        
         """
 
-def get_mode(wildcards):
-    if rna_seq and iso_seq:
-        return "isorna"
-    elif rna_seq:
-        return "rna"
-    elif rna_seq_u:
-        return "rna_u"
-    elif iso_seq:
-        return "iso"
-    else:
-        print ("something went wrong, should not get here")
+#if on data present, run against genome with minimap2
+rule onseq:
+    output:
+        "stringtie/minimap_on.sort.bam",
+    input:
+        assembly = expand("{prefix}.fold.fa", prefix=config["prefix"]),
+        on = config["on_seq"],
+    params:
+        threads = 20,
+        prefix = config["prefix"]
+        mode = get_mode
+    resources:
+        time = "96:0:0",
+        mem_per_cpu = "4G",
+        ntasks = 20
+    shell:
+        """
+        mkdir -p stringtie
+        cd stringtie
 
+        minimap2 -t {params.threads} -ax splice -uf -k14 ../{input.assembly} {input.on} | samtools view -buS - | \
+        samtools sort -m 4G -@ {params.threads} -T tmp -O bam - > minimap_on.sort.bam 2> samtools_minimap_on.err
+        """
+
+
+#TODO: what is the point of this?
 def get_hisat(wildcards):
     if rna_seq:
         return "stringtie/hisat2.sort.bam"
@@ -318,10 +333,34 @@ def get_hisat(wildcards):
         return list()
 
 def get_minimap(wildcards):
-    if iso_seq:
+    if iso_seq and on_seq:
         return "stringtie/minimap.sort.bam"
+    elif iso_seq:
+        return "stringtie/minimap_iso.sort.bam"
+    elif on_seq:
+        return "stringtie/minimap_on.sort.bam"
     else:
         return list()
+
+#1f merge iso and on reads if both are present
+rule merge_iso_on:
+    output:
+        "stringtie/minimap.sort.bam",
+    input:
+        on_minimap = "stringtie/minimap_on.sort.bam"
+        iso_minimap = "stringtie/minimap_iso.sort.bam"     
+    params:
+        threads = 20,
+        prefix = config["prefix"],
+        mode = get_mode,
+    resources:
+        time = "96:0:0",
+        mem_per_cpu = "4G",
+        ntasks = 20
+    shell:
+        r"""
+            samtools merge -o stringtie/minimap.sort.bam {input.on_minimap} {input.iso_minimap}
+        """
 
 #1e2: run StringTie to generate a GTF, convert to EVM input via TransDecoder
 rule stringtie:
@@ -339,26 +378,27 @@ rule stringtie:
         prefix = config["prefix"],
         mode = get_mode,
     resources:
-        #time = config["fcs_gx_time"],
         time = "96:0:0",
         mem_per_cpu = "4G",
-        #partition = config["fcs_gx_partition"],
         ntasks = 20
     shell:
         r"""
         cd stringtie
 
-        if [ {params.mode} == isorna ]; then
-            stringtie --mix --rf hisat2.sort.bam minimap.sort.bam > stringtie.gtf 2> stringtie.err
+        if [ {params.mode} == onisorna]; then
+            stringtie --mix --rf hisat2.sort.bam {input.minimap} > stringtie.gtf 2> stringtie.err
+        elif [ {params.mode} == isorna]; then
+            stringtie --mix --rf hisat2.sort.bam {input.minimap} > stringtie.gtf 2> stringtie.err
         elif [ {params.mode} == rna ];	then
             stringtie --rf hisat2.sort.bam > stringtie.gtf 2> stringtie.err
         elif [ {params.mode} == rna_u ];  then
             stringtie hisat2.sort.bam > stringtie.gtf 2> stringtie.err
-        elif [ {params.mode} == iso ];	then
-            stringtie -L minimap.sort.bam > stringtie.gtf 2> stringtie.err
+        elif [[ {params.mode} == iso || {params.mode} == on ]];	then
+            stringtie -L {input.minimap} > stringtie.gtf 2> stringtie.err
         else
             echo "Unknown setting"
         fi
+        
         gffread -E stringtie.gtf -o- > stringtie.gff 
         gffread -w stringtie.fa -g ../{input.assembly} stringtie.gtf
         #agat does not work here for some reason
