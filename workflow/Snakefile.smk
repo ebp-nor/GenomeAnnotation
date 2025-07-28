@@ -5,20 +5,20 @@ PROTEINSETS = ['model', 'uniprot', 'orthodb']
 localrules: preprocess_fold, preprocess_proteins, embl
 
 # Define conditions for producing different output types 
-is_rna_seq = if "rna_seq_r1" in config and "rna_seq_r2" in config and config["rna_seq_r1"] and config["rna_seq_r2"]
-is_rna_seq_u = if "rna_seq_u" in config and config["rna_seq_u"]
-is_iso_seq =  if "iso_seq" in config and config["iso_seq"] 
-is_on_seq = if "on_seq" in config and config["on_seq"]
-is_locus_tag = if "locus_tag"  in config and config["locus_tag"]
+is_rna_seq = ("rna_seq_r1" in config and "rna_seq_r2" in config and config["rna_seq_r1"] and config["rna_seq_r2"])
+is_rna_seq_u = ("rna_seq_u" in config and config["rna_seq_u"])
+is_iso_seq =  ("iso_seq" in config and config["iso_seq"])
+is_on_seq = ("on_seq" in config and config["on_seq"])
+is_locus_tag = ("locus_tag"  in config and config["locus_tag"])
 
 # Create output paths if conditions met
-rna_seq = if is_rna_seq ["stringtie/hisat2.sort.bam"] else list()
-rna_seq_u = if is_rna_seq_u ["stringtie/hisat2.sort.bam"] else list()
-iso_seq = if is_iso_seq ["stringtie/minimap_iso.sort.bam"] else list()
-on_seq = ["stringtie/minimap_on.sort.bam"] if is_on_seq else list()
-merged_iso_on = if is_iso_seq and is_on_seq ["stringtie/minimap.sort.bam"] else list()
+rna_seq = ["stringtie/hisat2.sort.bam"] if is_rna_seq  else []
+rna_seq_u = ["stringtie/hisat2_u.sort.bam"] if is_rna_seq_u else []
+iso_seq = ["stringtie/minimap_iso.sort.bam"] if is_iso_seq  else []
+on_seq = ["stringtie/minimap_on.sort.bam"] if is_on_seq else []
+merged_iso_on = if is_iso_seq and is_on_seq ["stringtie/minimap.sort.bam"] else []
 
-embl_list = if is_locus_tag [expand("{prefix}.embl.gz", prefix=config["prefix"])] else list()
+embl_list = if is_locus_tag [expand("{prefix}.embl.gz", prefix=config["prefix"])] else []
 
 trans_seq = list()
 if is_iso_seq or is_rna_seq or is_rna_seq_u or is_on_seq:
@@ -398,7 +398,7 @@ rule stringtie:
         else
             echo "Unknown setting"
         fi
-        
+
         gffread -E stringtie.gtf -o- > stringtie.gff 
         gffread -w stringtie.fa -g ../{input.assembly} stringtie.gtf
         #agat does not work here for some reason
