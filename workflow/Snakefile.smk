@@ -763,7 +763,8 @@ rule embl:
         #--project_id {params.project_id} \
         #-o {params.prefix}.embl > embl_gff.out 2> embl_gff.err
         
-        cat embl/*embl > {params.prefix}.embl
+        #EMBLmyGFF has a bug which puts OG on the same line as XX, meaning that downstream analyses don't see that the following is an organelle
+        cat embl/*embl |sed "s/XXOG/XX\\nOG/g" > {params.prefix}.embl
 
         samtools faidx {input.assembly}
         grep SUPER {input.assembly}.fai |awk '{{f=$1 ; sub(/SUPER_/,"",f) ; printf ("%s\t%s\tLinear-Chromosome\n", $1, f)}}' > {params.prefix}.chrs
