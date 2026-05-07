@@ -5,63 +5,59 @@ PROTEINSETS = ['model', 'uniprot', 'orthodb']
 localrules: preprocess_fold, preprocess_proteins, embl
 #embl
 
-rna_seq = list()
-if "rna_seq_r1" in config and "rna_seq_r2" in config and config["rna_seq_r1"] and config["rna_seq_r2"]:
-    rna_seq.append("stringtie/hisat2.sort.bam")
+# Define conditions for producing different output types 
+is_rna_seq = ("rna_seq_r1" in config and "rna_seq_r2" in config and config["rna_seq_r1"] and config["rna_seq_r2"])
+is_rna_seq_u = ("rna_seq_u" in config and config["rna_seq_u"])
+is_iso_seq =  ("iso_seq" in config and config["iso_seq"])
+is_on_seq = ("on_seq" in config and config["on_seq"])
+is_locus_tag = ("locus_tag"  in config and config["locus_tag"])
 
-rna_seq_u = list()
-if "rna_seq_u" in config and config["rna_seq_u"]:
-    rna_seq.append("stringtie/hisat2_u.sort.bam")
+# Create output paths if conditions met
+rna_seq = ["stringtie/hisat2.sort.bam"] if is_rna_seq  else []
+rna_seq_u = ["stringtie/hisat2_u.sort.bam"] if is_rna_seq_u else []
+iso_seq = ["stringtie/minimap_iso.sort.bam"] if is_iso_seq  else []
+on_seq = ["stringtie/minimap_on.sort.bam"] if is_on_seq else []
+merged_iso_on = ["stringtie/minimap.sort.bam"] if (is_iso_seq and is_on_seq) else []
 
-iso_seq = list()
-if "iso_seq" in config and config["iso_seq"]:
-    iso_seq.append("stringtie/minimap.sort.bam")
+embl_list = [expand("{prefix}.embl.gz", prefix=config["prefix"])] if is_locus_tag else []
 
 trans_seq = list()
-if iso_seq or rna_seq or rna_seq_u:
+if is_iso_seq or is_rna_seq or is_rna_seq_u or is_on_seq:
     trans_seq.append("stringtie/transcripts.fasta.transdecoder.genome.gff3")
-    #trans_seq.append("stringtie/stringtie.proteins.fa")
     trans_seq.append(expand("stringtie/busco_stringtie_{lineage}", lineage=config["busco_lineage"]))
-    #for lineage in config["busco_lineage"]:
-        #trans_seq.append("stringtie/busco_stringtie_%s" % lineage)
-
-embl_list = list()
-if "locus_tag"  in config and config["locus_tag"]:
-   embl_list.append(expand("{prefix}.embl.gz", prefix=config["prefix"]))
 
 rule all:
     input:
         rna_seq,
         rna_seq_u,
         iso_seq,
+        on_seq,
         trans_seq,
         embl_list,
-#        expand("miniprot/{protein_set}_mp4evm.gff3",  protein_set=PROTEINSETS),
-#        expand("{prefix}.softmasked.fa", prefix=config["prefix"]),
-#        expand("{prefix}.fold.fa", prefix=config["prefix"]),
-#        "galba/galba.gtf",
-#        "galba/galba.proteins.fa",
-#        "evm/evm.gff3",
-#        "filter/filtered.proteins.fa",
-#        "uniprot/diamond.blastp.out",
-#        "ipr/ipr.tsv",
+        merged_iso_on,
         expand("functional/{prefix}.gff", prefix=config["prefix"]),
         expand("functional/{prefix}.proteins.fa", prefix=config["prefix"]),
         expand("evm/busco_evm_{lineage}", lineage=config["busco_lineage"]),
         expand("galba/busco_galba_{lineage}", lineage=config["busco_lineage"]),
+        expand("helixer/busco_helixer_{lineage}", lineage=config["busco_lineage"]),
         expand("functional/busco_{prefix}_{lineage}", prefix=config["prefix"], lineage=config["busco_lineage"]),
         expand("miniprot/busco_model_mp_{lineage}", lineage=config["busco_lineage"]),
-        expand("{prefix}_EarlGrey/{prefix}_summaryFiles/{prefix}-families.fa.strained", prefix=config["prefix"]),
-#        expand("{prefix}.embl", prefix=config["prefix"]),
-        #expand("{busco_lib}/{lineage}_odb10", busco_lib=config["busco_lib"], lineage=config["busco_lineage"])
+        "helixer/helixer.gff3",
+        expand("ultra/{prefix}.ultra.bed",prefix=config["prefix"]),
+        expand("trash/{prefix}.fold.fa_repeats.gff",prefix=config["prefix"]),
+        expand("edta/{prefix}.fold.fa.mod.EDTA.TEanno.gff3", prefix=config["prefix"]),
+        #expand("{prefix}_EarlGrey/{prefix}_summaryFiles/{prefix}-families.fa.strained", prefix=config["prefix"]),
+
 
 rule no_te:
     input:
         rna_seq,
         rna_seq_u,
         iso_seq,
+        on_seq,
         trans_seq,
         embl_list,
+        merged_iso_on,
         expand("functional/{prefix}.gff", prefix=config["prefix"]),
         expand("functional/{prefix}.proteins.fa", prefix=config["prefix"]),
         expand("evm/busco_evm_{lineage}", lineage=config["busco_lineage"]),
@@ -99,31 +95,14 @@ rule preprocess_proteins:
         r"""
         mkdir -p proteins
         cp -rf {input.model} {output.model_proteins}
-        ln -s {input.uniprot} {output.uniprot_proteins}
-        ln -s {input.orthodb} {output.orthodb_proteins}
+        ln -sf {input.uniprot} {output.uniprot_proteins}
+        ln -sf {input.orthodb} {output.orthodb_proteins}
         """
 
 
 #1a: create softmasked assembly with RepeatModeler from TETools (https://github.com/Dfam-consortium/TETools). RepeatModeler takes a lot of time. Maybe do RED instead?
 #earlgrey instead
 
-rule earlgrey:
-    output:
-       repeats = "{prefix}_EarlGrey/{prefix}_summaryFiles/{prefix}-families.fa.strained"
-    input:
-       assembly = "{prefix}.fold.fa"
-#    threads: 20
-    params:
-        threads = 64                        
-    resources:
-        time = "128:0:0",
-        mem_per_cpu = "5G",
-        partition = "bigmem",
-        ntasks = 64   
-    shell:
-        r"""
-        earlGrey -t {params.threads} -g {input.assembly} -s {wildcards.prefix} -o .
-        """
 
 rule softmask:
     output:
@@ -132,12 +111,87 @@ rule softmask:
     input:
         assembly = "{prefix}.fold.fa"
     resources:
+        ntask = 10,
         time = "20:0:0",
-        mem_per_cpu = "6G",
+        mem_per_cpu = "15G",
     shell:
         r"""
         python /cluster/projects/nn8013k/opt/redmask/redmask.py -i {input.assembly} -o {wildcards.prefix} 
         """
+
+rule edta:
+    output:
+        anno_repeats = expand("edta/{prefix}.fold.fa.mod.EDTA.TEanno.gff3", prefix=config["prefix"]),
+    input:
+        assembly = expand("{prefix}.fold.fa", prefix=config["prefix"]),
+    params:
+        threads = 30,
+    resources:
+        time = "167:0:0",
+        mem_per_cpu = "5G",
+        ntasks = 30,
+    shell:
+        r"""
+        mkdir -p edta
+        cd edta
+        ln -sf ../{input.assembly} .
+        EDTA.pl --genome {input.assembly} --species others --step all --anno 1 -t {params.threads} 1> edta.out 2> edta.err
+        """
+
+rule ultra:
+    output:
+        strs = expand("ultra/{prefix}.ultra.bed",prefix=config["prefix"]),
+    input:
+        assembly = expand("{prefix}.fold.fa", prefix=config["prefix"]),
+    params:
+        threads = 20,
+        prefix = config["prefix"],
+    resources:
+        time = "128:0:0",
+        mem_per_cpu = "5G",
+        ntasks = 20
+    shell:
+        r"""
+        ultra -t {params.threads} --tune --tune_indel --fdr --tsv --json --bed -o ultra/{params.prefix}.ultra {input.assembly} 1> ultra/ultra.out 2> ultra/ultra.err 
+        """  
+
+rule longdust:
+    output:
+        expand("longdust/{prefix}.longdust.bed",prefix=config["prefix"]),
+    input:
+        assembly = expand("{prefix}.fold.fa", prefix=config["prefix"]),
+    params:
+        prefix = config["prefix"],
+    resources:
+        time = "4:0:0",
+        mem_per_cpu = "5G",
+        ntasks = 1
+    shell:
+        r"""
+        longdust {input.assembly} 1> longdust/{params.prefix}.longdust.bed
+        """
+
+rule trash:
+    output:
+        expand("trash/{prefix}.fold.fa_repeats.gff",prefix=config["prefix"]),
+    input:
+        assembly = expand("{prefix}.fold.fa", prefix=config["prefix"]),
+        trash = config["trash_repo"],
+    params:
+        threads = 20,
+        prefix = config["prefix"],
+    resources:
+        time = "128:0:0",
+        mem_per_cpu = "5G",
+        ntasks = 20
+    shell:
+        r"""
+        {input.trash}/src/TRASH.R  -p {params.threads} -f {input.assembly} -o $PWD/trash
+        #the GFF files as output by TRASH contains ^M, which is endline on DOS/Windows systems. Need to change that
+        #sed "s/^M/\n/g" trash/*gff
+        """  
+
+
 #1b: map proteins from a model species against the genome assembly, zebrafish for fish, human for mammals, etc., using miniprot, convert to EVM input
 #1c: map SwissProt/UniProtKB against the genome assembly using miniprot, convert to EVM input
 #1d: map OrthoDB v11 clade of proteins against the genome assembly using miniprot (can take some time and memory), convert to EVM input 
@@ -154,7 +208,7 @@ rule miniprot:
         #time = config["fcs_gx_time"],
         #mem_per_cpu = config["fcs_gx_mem"],
         #partition = config["fcs_gx_partition"],
-        mem_per_cpu = "5G",
+        mem_per_cpu = "15G",
         ntasks = 10,
         time = "72:0:0"
     shell:
@@ -270,12 +324,32 @@ rule hisat_u:
         -u {input.u} \
         --rna-strandness R \
         2> hisat.err | samtools view -buS - | \
-        samtools sort -m 4G -@ {params.threads} -T tmp -O bam - > hisat2.sort.bam 2> samtools_hisat.err
+        samtools sort -m 4G -@ {params.threads} -T tmp -O bam - > hisat2_u.sort.bam 2> samtools_hisat.err
         """
+
+def get_mode(wildcards):
+    if is_rna_seq and is_iso_seq and is_on_seq:
+        return "onisorna"
+    elif is_rna_seq and is_iso_seq:
+        return "isorna"
+    elif is_iso_seq and is_on_seq:
+        return "oniso"
+    elif is_rna_seq and is_on_seq:
+        return "onrna"
+    elif is_rna_seq:
+        return "rna"
+    elif is_rna_seq_u:
+        return "rna_u"
+    elif is_iso_seq:
+        return "iso"
+    elif is_on_seq:
+        return "on"
+    else:
+        print ("something went wrong, should not get here")
 
 rule isoseq:
     output:
-        "stringtie/minimap.sort.bam",
+        "stringtie/minimap_iso.sort.bam",
     input:
         assembly = expand("{prefix}.fold.fa", prefix=config["prefix"]),
         iso = config["iso_seq"],
@@ -294,34 +368,68 @@ rule isoseq:
         cd stringtie
         
         minimap2 -t {params.threads} -ax splice:hq -uf ../{input.assembly} {input.iso} | samtools view -buS - | \
-        samtools sort -m 4G -@ {params.threads} -T tmp -O bam - > minimap.sort.bam 2> samtools_minimap.err
+        samtools sort -m 4G -@ {params.threads} -T tmp -O bam - > minimap_iso.sort.bam 2> samtools_minimap.err
         """
 
-def get_mode(wildcards):
-    if rna_seq and iso_seq:
-        return "isorna"
-    elif rna_seq:
-        return "rna"
-    elif rna_seq_u:
-        return "rna_u"
-    elif iso_seq:
-        return "iso"
-    else:
-        print ("something went wrong, should not get here")
+#if on data present, run against genome with minimap2
+rule onseq:
+    output:
+        "stringtie/minimap_on.sort.bam",
+    input:
+        assembly = expand("{prefix}.fold.fa", prefix=config["prefix"]),
+        on = config["on_seq"],
+    params:
+        threads = 20,
+        prefix = config["prefix"]
+    resources:
+        time = "96:0:0",
+        mem_per_cpu = "4G",
+        ntasks = 20
+    shell:
+        """
+        mkdir -p stringtie
+        cd stringtie
+
+        minimap2 -t {params.threads} -ax splice -uf -k14 ../{input.assembly} {input.on} | samtools view -buS - | \
+        samtools sort -m 4G -@ {params.threads} -T tmp -O bam - > minimap_on.sort.bam 2> samtools_minimap_on.err
+        """
 
 def get_hisat(wildcards):
     if rna_seq:
         return "stringtie/hisat2.sort.bam"
     elif rna_seq_u:
-        return "stringtie/hisat2.sort.bam"
+        return "stringtie/hisat2_u.sort.bam"
     else:
         return list()
 
 def get_minimap(wildcards):
-    if iso_seq:
+    if iso_seq and on_seq:
         return "stringtie/minimap.sort.bam"
+    elif iso_seq:
+        return "stringtie/minimap_iso.sort.bam"
+    elif on_seq:
+        return "stringtie/minimap_on.sort.bam"
     else:
         return list()
+
+#1f merge iso and on reads if both are present
+rule merge_iso_on:
+    output:
+        "stringtie/minimap.sort.bam",
+    input:
+        on_minimap = "stringtie/minimap_on.sort.bam",
+        iso_minimap = "stringtie/minimap_iso.sort.bam"     
+    params:
+        threads = 20,
+        prefix = config["prefix"],
+    resources:
+        time = "96:0:0",
+        mem_per_cpu = "4G",
+        ntasks = 20
+    shell:
+        r"""
+            samtools merge -o stringtie/minimap.sort.bam {input.on_minimap} {input.iso_minimap}
+        """
 
 #1e2: run StringTie to generate a GTF, convert to EVM input via TransDecoder
 rule stringtie:
@@ -346,26 +454,36 @@ rule stringtie:
         ntasks = 20
     shell:
         r"""
-        cd stringtie
-
-        if [ {params.mode} == isorna ]; then
-            stringtie --mix --rf hisat2.sort.bam minimap.sort.bam > stringtie.gtf 2> stringtie.err
-        elif [ {params.mode} == rna ];	then
-            stringtie --rf hisat2.sort.bam > stringtie.gtf 2> stringtie.err
-        elif [ {params.mode} == rna_u ];  then
-            stringtie hisat2.sort.bam > stringtie.gtf 2> stringtie.err
-        elif [ {params.mode} == iso ];	then
-            stringtie -L minimap.sort.bam > stringtie.gtf 2> stringtie.err
+        #cd stringtie
+        echo {params.mode}
+        if [[ {params.mode} == "onisorna"  ]]; then
+            stringtie --mix --rf {input.hisat} {input.minimap} > stringtie/stringtie.gtf 2> stringtie/stringtie.err
+        elif [[ {params.mode} == "onrna" ]]; then
+            stringtie --mix --rf {input.hisat} {input.minimap} > stringtie/stringtie.gtf 2> stringtie/stringtie.err
+        elif [[ {params.mode} == "isorna" ]]; then
+            stringtie --mix --rf {input.hisat} {input.minimap} > stringtie/stringtie.gtf 2> stringtie/stringtie.err
+        elif [[ {params.mode} == "rna" ]]; then
+            stringtie --rf {input.hisat} > stringtie/stringtie.gtf 2> stringtie/stringtie.err
+        elif [[ {params.mode} == "rna_u" ]]; then
+            stringtie {input.hisat} > stringtie/stringtie.gtf 2> stringtie/stringtie.err
+        elif [[ {params.mode} == "iso" ]]; then
+            stringtie -L {input.minimap} > stringtie/stringtie.gtf 2> stringtie/stringtie.err
+        elif [[ {params.mode} == "oniso" ]]; then
+            stringtie -L {input.minimap} > stringtie/stringtie.gtf 2> stringtie/stringtie.err
+        elif [[ {params.mode} == "on" ]]; then
+            stringtie -L {input.minimap} > stringtie/stringtie.gtf 2> stringtie/stringtie.err
         else
             echo "Unknown setting"
         fi
+
+        cd stringtie
         gffread -E stringtie.gtf -o- > stringtie.gff 
         gffread -w stringtie.fa -g ../{input.assembly} stringtie.gtf
         #agat does not work here for some reason
         
-        gtf_genome_to_cdna_fasta.pl stringtie.gtf ../{input.assembly} > transcripts.fasta 2> gtf_genome_to_cdna_fasta.err
+        $CONDA_PREFIX/opt/transdecoder/util/gtf_genome_to_cdna_fasta.pl stringtie.gtf ../{input.assembly} > transcripts.fasta 2> gtf_genome_to_cdna_fasta.err
 
-        gtf_to_alignment_gff3.pl stringtie.gtf > transcripts.gff3 2> transcripts.err
+        $CONDA_PREFIX/opt/transdecoder/util/gtf_to_alignment_gff3.pl stringtie.gtf > transcripts.gff3 2> transcripts.err
 
         TransDecoder.LongOrfs -t transcripts.fasta --output_dir . 1> transdecoder_longorfs.out 2> transdecoder_longorfs.err
 
@@ -388,11 +506,48 @@ rule stringtie:
         transcripts.gff3 \
         transcripts.fasta > transcripts.fasta.transdecoder.genome.gff3
 
-        ln -s transcripts.fasta.transdecoder.pep stringtie.proteins.fa
+        ln -sf transcripts.fasta.transdecoder.pep stringtie.proteins.fa
 
         """
 
+#run helixer
+rule helixer:
+    output:
+        "helixer/helixer.gff3"
+    input:
+        assembly = expand("{prefix}.fold.fa", prefix=config["prefix"]),
+        helixer = config["helixer_sif"],
+    params:
+        lineage = config["helixer_lineage"],
+    resources:
+        partition = "a100",
+        time = "96:0:0",
+        gpus = "4",
+        mem_per_cpu = "20G",
+    shell:
+        """
+        mkdir -p helixer
+        mkdir -p helixer_tmp
+        singularity run -B $PWD:/data --nv {input.helixer} Helixer.py \
+        --fasta-path /data/{input.assembly} --lineage {params.lineage} \
+        --gff-output-path /data/helixer/helixer.gff3 --batch-size 16 \
+        --temporary-dir /data/helixer_tmp
+        """ 
 
+rule helixer_proteins:
+    output:
+        "helixer/helixer.proteins.fa"
+    input:
+        assembly = expand("{prefix}.fold.fa", prefix=config["prefix"]),
+        helixer = "helixer/helixer.gff3"
+    resources:
+        time = "10:0:0",
+        mem_per_cpu = "20G",
+        ntasks = 1
+    shell:
+        """
+        agat_sp_extract_sequences.pl --gff {input.helixer} -f {input.assembly}  -t cds -p -o helixer/helixer.proteins.fa
+        """  
 
 #2: run GALBA on the softmasked genome assembly using suitable proteins (zebrafish, human, etc).
 
@@ -402,7 +557,8 @@ rule galba:
         annotation = "galba/galba.gtf",
     input:
         proteins =  "proteins/model.fasta",
-        assembly = expand("{prefix}.softmasked.fa", prefix=config["prefix"])
+        assembly = expand("{prefix}.softmasked.fa", prefix=config["prefix"]),
+        galba = config["galba_sif"],
     params:
         threads = 20,
         prefix = config["prefix"]
@@ -416,9 +572,9 @@ rule galba:
         r"""
         rm -r galba
         mkdir -p galba 
-        singularity exec -B $PWD:/data /cluster/projects/nn8013k/opt/galba/galba.sif cp -rf /usr/share/augustus/config /data/galba
-        singularity exec -B $PWD:/data /cluster/projects/nn8013k/opt/galba/galba.sif  galba.pl --version > galba.version
-        singularity exec -B $PWD:/data /cluster/projects/nn8013k/opt/galba/galba.sif  galba.pl --species={params.prefix} --threads={params.threads} --genome=/data/{input.assembly} \
+        singularity exec -B $PWD:/data {input.galba} cp -rf /opt/Augustus/config /data/galba
+        singularity exec -B $PWD:/data {input.galba} galba.pl --version > galba.version
+        singularity exec -B $PWD:/data {input.galba} galba.pl --species={params.prefix} --threads={params.threads} --genome=/data/{input.assembly} \
          --verbosity=4 --prot_seq=/data/{input.proteins}  --workingdir=/data/galba \
          --augustus_args="--stopCodonExcludedFromCDS=False" --gff3 \
          --AUGUSTUS_CONFIG_PATH=/data/galba/config \
@@ -426,6 +582,7 @@ rule galba:
         
         agat_sp_extract_sequences.pl --gff galba/galba.gtf -f {input.assembly}  -t cds -p -o galba/galba.proteins.fa
         """    
+
 
 def get_stringtie(wildcards):
     if trans_seq:
@@ -446,22 +603,23 @@ rule evm:
         uniprot =  "miniprot/uniprot_mp4evm.gff3",
         masked = expand("{prefix}.softmasked.fa", prefix=config["prefix"]),
         galba = "galba/galba.gtf",
+        helixer = "helixer/helixer.gff3",
         #expand('stringtie/transcripts.fasta.transdecoder.genome.gff3', proxy=[] if rna_seq else [None]),
         stringtie = get_stringtie,
     params:
-        threads = 20,
+        threads = config["evm_cpus"],
         prefix = config["prefix"]
     resources:
-        #time = config["fcs_gx_time"],
-        mem_per_cpu = "8G",
-        #partition = config["fcs_gx_partition"],
-        ntasks = 20
+        time = config["evm_time"],
+        mem_per_cpu = config["evm_mem"],
+        ntasks = config["evm_cpus"]
     shell:
         r"""
         mkdir -p evm 
         $EVM_HOME/EvmUtils/misc/augustus_GTF_to_EVM_GFF3.pl {input.galba} > evm/galba.evm.gff3 
         #/cluster/projects/nn8013k/programs/miniconda3/envs/anno_pipeline/opt/evidencemodeler-1.1.1/EvmUtils/misc/augustus_GTF_to_EVM_GFF3.pl {input.galba} > evm/galba.evm.gff3 
         cat evm/galba.evm.gff3 > evm/gene_predictions.gff3 
+        cat {input.helixer} |grep -v "^#" | awk '/gene/ {{printf "\n"}}1' >> evm/gene_predictions.gff3
         cat {input.orthodb} | awk '/gene/ {{printf "\n"}}1' >> evm/gene_predictions.gff3 
         cat {input.model} | awk '/gene/ {{printf "\n"}}1' >> evm/gene_predictions.gff3 
         cat {input.uniprot} | awk '/gene/ {{printf "\n"}}1' >> evm/gene_predictions.gff3
@@ -469,8 +627,9 @@ rule evm:
         #the awk thingy adds an empty line before each line matching gene to make the script below work
 
         printf "ABINITIO_PREDICTION\tAugustus\t1\n" > evm/weights.evm.txt 
-        printf "OTHER_PREDICTION\tminiprot\t4\n" >> evm/weights.evm.txt
-        printf "OTHER_PREDICTION\ttransdecoder\t6\n" >> evm/weights.evm.txt
+        printf "ABINITIO_PREDICTION\tHelixer\t10\n" >> evm/weights.evm.txt 
+        printf "OTHER_PREDICTION\tminiprot\t2\n" >> evm/weights.evm.txt
+        printf "OTHER_PREDICTION\ttransdecoder\t5\n" >> evm/weights.evm.txt
         
         cd evm
         
@@ -520,7 +679,7 @@ rule filter:
         set +e
         cut -f 1 filter/repeats.tsv |sort -u > filter/kill.list
         #the line below adds any and all proteins with X to the kill list. X is because the nucleotide sequence contains Ns. For some reason it sometimes returns 1. Have to set +e above to avoid aborting the pipeline
-        cat {input.evm_proteins} |awk '/^>/ {{printf("%s%s\t",(N>0?"\n":""),$0);N++;next;}} {{printf("%s",$0);}} END {{printf("\n");}}' |grep X |cut -f 1 -d " " | tr -d ">" >> filter/kill.list
+        #cat {input.evm_proteins} |awk '/^>/ {{printf("%s%s\t",(N>0?"\n":""),$0);N++;next;}} {{printf("%s",$0);}} END {{printf("\n");}}' |grep X |cut -f 1 -d " " | tr -d ">" >> filter/kill.list
         #[ -f filter/removed_repeats.gff ] && rm -rf filter/removed_repeats*
 	echo "remove some old files 1"
         rm -rf filter/removed_repeats*
@@ -540,7 +699,7 @@ rule ipr:
     input:
        filtered = "filter/filtered.proteins.fa"
     resources:
-        #time = config["fcs_gx_time"],
+        time = config["ipr_time"],
         mem_per_cpu = "3G",
         #partition = config["fcs_gx_partition"],
         ntasks = 20
@@ -549,6 +708,7 @@ rule ipr:
        mkdir -p ipr
        cat {input.filtered} |sed 's/*//g' > ipr/input.proteins.fa
        cd ipr
+       #dont like this solution but cannot come up with a better one presently
        module load StdEnv InterProScan/5.62-94.0-foss-2022a
 
        timepoint="`date +\%y\%m\%d_\%H\%M\%S`"
@@ -760,3 +920,21 @@ rule busco:
         busco --tar -c 10 -i {input.proteins} -l {params.busco_lib}/{wildcards.lineage}_odb10 -o busco_{wildcards.analysis}_{wildcards.lineage} --out_path {wildcards.dir} \
         -m proteins --offline 
         """
+
+rule plotting:
+    output:
+        longdust = "plots/longdust.svg",
+        genes = "plots/genes.svg",
+        ultra = "plots/ultra.svg",
+        trash = "plots/trash.svg",
+        tracks = "plots/tracks.svg",
+        tes = "plots/tes.svg",
+        tes_tra_genes = "plots/tes_trash_genes.svg"
+    input:
+        genes = expand("functional/{prefix}.gff", prefix=config["prefix"]),
+        trash = expand("trash/{prefix}.fold.fa_repeats.gff",prefix=config["prefix"]),
+        ultra = expand("ultra/{prefix}.ultra.bed",prefix=config["prefix"]),
+        edta = expand("edta/{prefix}.fold.fa.mod.EDTA.TEanno.gff3", prefix=config["prefix"]),
+        longdust = expand("longdust/{prefix}.longdust.bed",prefix=config["prefix"]),
+    script:
+         "scripts/plotting.py"

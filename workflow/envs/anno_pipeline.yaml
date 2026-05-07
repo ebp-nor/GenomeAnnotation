@@ -3,7 +3,7 @@ channels:
   - bioconda
   - conda-forge
 dependencies:
-  - miniprot=0.11
+  - miniprot
   - agat
   - gffread
   - funannotate
@@ -19,4 +19,9 @@ dependencies:
   - minimap2
   - busco
   - snakemake
-  - earlgrey
+  - edta
+  - ultra
+  - mafft
+  - r-essentials
+  - biopython=1.80
+  - mdust
